@@ -596,10 +596,13 @@ def read_new_logs_from_position(log_file: str, start_position: int) -> tuple:
     try:
         with open(log_file, 'r', encoding='utf-8') as f:
             # Check if file was truncated (log rotation)
+            # QUAN TRỌNG: Nếu file bị rotate, chỉ đọc từ đầu file MỚI, không đọc file cũ
             try:
                 current_size = os.path.getsize(log_file)
                 if current_size < start_position:
-                    logger.debug(f"File appears to have been rotated (size {current_size} < position {start_position}), resetting to start")
+                    # File bị rotate - reset về đầu file MỚI (không phải file cũ)
+                    logger.info(f"⚠️  File rotated: size {current_size} < position {start_position}")
+                    logger.info(f"   ✅ Reset position to 0 (chỉ đọc log mới từ file mới)")
                     start_position = 0
             except (OSError, FileNotFoundError):
                 # File may have been deleted or renamed
@@ -607,8 +610,15 @@ def read_new_logs_from_position(log_file: str, start_position: int) -> tuple:
                 start_position = 0
             
             # Seek to last known position (handle potential rotation)
+            # QUAN TRỌNG: Chỉ seek đến vị trí đã biết, không bao giờ đọc lại từ đầu file cũ
             try:
-                f.seek(start_position)
+                if start_position > 0:
+                    f.seek(start_position)
+                    logger.debug(f"Seeking to position {start_position} (chỉ đọc log mới)")
+                else:
+                    # Nếu start_position = 0 (file mới hoặc rotate), đọc từ đầu file MỚI
+                    f.seek(0)
+                    logger.debug(f"Reading from start of file (file mới hoặc đã rotate)")
             except (OSError, ValueError) as e:
                 # File may have been rotated or truncated
                 logger.debug(f"Could not seek to position {start_position}, resetting to start: {e}")
@@ -699,12 +709,22 @@ def detect_bruteforce_realtime(log_file: str, detector: OptimizedBruteForceDetec
     logger.info(f"   - ✅ CHỈ GHI: Các log phát hiện brute-force vào {OUTPUT_ALERT_FILE}")
     logger.info("Press Ctrl+C to stop")
     
-    # Initialize file position (bắt đầu từ cuối file = chỉ đọc log mới)
+    # Initialize file position (bắt đầu từ cuối file = CHỈ ĐỌC LOG MỚI, KHÔNG ĐỌC LOG CŨ)
     try:
         with open(log_file, 'r', encoding='utf-8') as f:
-            f.seek(0, 2)  # Seek to end
+            # QUAN TRỌNG: Seek đến cuối file để KHÔNG đọc log cũ
+            f.seek(0, 2)  # Seek to end of file
             last_position = f.tell()
-        logger.info(f"📌 Starting position: {last_position} bytes (chỉ đọc log mới từ đây)")
+            file_size = last_position
+        
+        # Verify we're at the end
+        if file_size > 0:
+            logger.info(f"📌 Starting position: {last_position} bytes (END OF FILE)")
+            logger.info(f"   ✅ CHỈ ĐỌC LOG MỚI: Bỏ qua {file_size} bytes log cũ")
+            logger.info(f"   ✅ REAL-TIME MODE: Chỉ detect log được thêm vào SAU khi service start")
+        else:
+            logger.info(f"📌 Starting position: {last_position} bytes (EMPTY FILE)")
+            logger.info(f"   ✅ REAL-TIME MODE: Chờ log mới được thêm vào")
     except FileNotFoundError:
         logger.error(f"❌ INPUT LOG FILE NOT FOUND: {log_file}")
         return
@@ -732,18 +752,21 @@ def detect_bruteforce_realtime(log_file: str, detector: OptimizedBruteForceDetec
                 last_cleanup_time = current_time
                 logger.debug(f"🧹 Cleaned up processed_alert_logs (removed {old_size} entries)")
             
-            # Đọc log mới từ vị trí cuối cùng
+            # Đọc log mới từ vị trí cuối cùng (CHỈ LOG MỚI, KHÔNG ĐỌC LOG CŨ)
             try:
                 new_logs, last_position = read_new_logs_from_position(log_file, last_position)
+                if new_logs:
+                    logger.debug(f"📥 Read {len(new_logs)} NEW log entries (realtime)")
             except Exception as e:
                 logger.error(f"Error in read_new_logs_from_position: {e}")
                 logger.debug(traceback.format_exc())
-                # Reset position on error to avoid infinite loop
+                # Reset position on error - seek to END of file (không đọc log cũ)
                 try:
                     if os.path.exists(log_file) and os.access(log_file, os.R_OK):
                         with open(log_file, 'r', encoding='utf-8') as f:
-                            f.seek(0, 2)
+                            f.seek(0, 2)  # Seek to END - không đọc log cũ
                             last_position = f.tell()
+                            logger.debug(f"Reset position to END of file: {last_position} bytes")
                     else:
                         last_position = 0
                 except Exception:
