@@ -1,0 +1,66 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual Environment
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+*.log.*
+
+# Model files (uncomment if you don't want to commit models)
+# *.pkl
+# models/*.pkl
+# models/*.backup
+
+# Training data
+normal.log
+*.csv
+*.json.gz
+
+# Backup files
+*.backup
+*.bak
+*.tmp
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# System
+*.pid
+*.seed
+*.pid.lock
+
+# Wazuh logs (system logs)
+/var/ossec/logs/
+
+# Cache
+.cache/
+*.cache
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+

@@ -1,0 +1,16 @@
+[Unit]
+Description=Real-time Brute-Force Detection Service
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/ai-brute/rebornAI/rebornAI
+ExecStart=/usr/bin/python3 /root/ai-brute/rebornAI/rebornAI/realtime_bruteforce_detector.py
+Restart=always
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
