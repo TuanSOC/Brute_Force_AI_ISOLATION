@@ -17,29 +17,56 @@ Hệ thống phát hiện Brute-Force Attack sử dụng AI (Isolation Forest) k
 - Ubuntu/Debian (tested on Ubuntu 20.04/22.04)
 - Wazuh SIEM
 
-## 🚀 Cài đặt
+## 🚀 Cài đặt Nhanh (Auto Setup)
 
-### 1. Clone Repository
+### Cách 1: Auto Setup (Khuyến nghị - Chỉ 1 lệnh)
+
+```bash
+# Clone và setup tự động
+sudo bash -c "$(curl -fsSL https://raw.githubusercontent.com/TuanSOC/Brute_Force_AI_ISOLATION/main/reBorn_AI/setup.sh)" || \
+sudo bash <(wget -qO- https://raw.githubusercontent.com/TuanSOC/Brute_Force_AI_ISOLATION/main/reBorn_AI/setup.sh)
+```
+
+Hoặc clone về và chạy:
 
 ```bash
 git clone https://github.com/TuanSOC/Brute_Force_AI_ISOLATION.git
-cd Brute_Force_AI_ISOLATION
+cd Brute_Force_AI_ISOLATION/reBorn_AI
+chmod +x setup.sh
+sudo ./setup.sh
 ```
 
-### 2. Cài đặt Dependencies
+Script sẽ tự động:
+- ✅ Cài đặt Python và dependencies
+- ✅ Clone/Update repository
+- ✅ Tạo virtual environment
+- ✅ Cài đặt packages
+- ✅ Train model (nếu cần)
+- ✅ Tạo systemd service
+- ✅ Start service tự động
+
+### Cách 2: Manual Setup
+
+#### 1. Clone Repository
+
+```bash
+git clone https://github.com/TuanSOC/Brute_Force_AI_ISOLATION.git
+cd Brute_Force_AI_ISOLATION/reBorn_AI
+```
+
+#### 2. Cài đặt Dependencies
 
 ```bash
 pip3 install pandas scikit-learn joblib numpy
 ```
 
-### 3. Train Model
+#### 3. Train Model
 
 ```bash
-cd reBorn_AI
 python3 optimized_bruteforce_detector.py
 ```
 
-### 4. Deploy Service
+#### 4. Deploy Service
 
 ```bash
 chmod +x deploy_realtime.sh
