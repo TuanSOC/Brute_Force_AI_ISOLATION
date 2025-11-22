@@ -775,9 +775,9 @@ def detect_bruteforce_realtime(log_file: str, detector: OptimizedBruteForceDetec
                 time.sleep(1)  # Wait before retry
                 continue
             
-            # Xử lý từng log mới ngay lập tức
+            # Xử lý từng log mới ngay lập tức (REALTIME DETECTION)
             if new_logs:
-                logger.debug(f"📥 Read {len(new_logs)} new log entries")
+                logger.debug(f"📥 Processing {len(new_logs)} NEW log entries (realtime detection)")
                 
                 for auth_data, wazuh_entry, log_timestamp in new_logs:
                     try:
