@@ -135,9 +135,13 @@ def parse_wazuh_log(line: str) -> Optional[tuple]:
                         auth_data = json.loads(full_log_str)
                     except json.JSONDecodeError:
                         # Try unescaping first
-                        import codecs
-                        unescaped = codecs.decode(full_log_str, 'unicode_escape')
-                        auth_data = json.loads(unescaped)
+                        try:
+                            import codecs
+                            unescaped = codecs.decode(full_log_str, 'unicode_escape')
+                            auth_data = json.loads(unescaped)
+                        except (UnicodeDecodeError, json.JSONDecodeError, Exception):
+                            # If unescaping fails, will fallback to 'data' field below
+                            pass
             except (json.JSONDecodeError, TypeError) as e:
                 logger.debug(f"Could not parse full_log: {e}")
         
@@ -318,8 +322,21 @@ def write_alert(log_entry: Dict[str, Any], detection_result: tuple, auth_data: D
         is_bruteforce, normalized_score, patterns, confidence, threat_level, risk_score, raw_anomaly_score, decision_threshold, features = detection_result
     elif len(detection_result) >= 6:
         is_bruteforce, normalized_score, patterns, confidence, threat_level, risk_score = detection_result[:6]
+        raw_anomaly_score = None
+        decision_threshold = DETECTION_THRESHOLD if DETECTION_THRESHOLD is not None else 0.091730
+        features = {}
     else:
-        is_bruteforce, normalized_score, patterns, confidence, threat_level, risk_score = detection_result
+        # Invalid format - use defaults
+        logger.warning(f"Invalid detection_result format in write_alert: expected >= 6 elements, got {len(detection_result)}")
+        is_bruteforce = detection_result[0] if len(detection_result) > 0 else False
+        normalized_score = detection_result[1] if len(detection_result) > 1 else 0.0
+        patterns = detection_result[2] if len(detection_result) > 2 else []
+        confidence = detection_result[3] if len(detection_result) > 3 else "Low"
+        threat_level = detection_result[4] if len(detection_result) > 4 else "Low"
+        risk_score = detection_result[5] if len(detection_result) > 5 else 0.0
+        raw_anomaly_score = None
+        decision_threshold = DETECTION_THRESHOLD if DETECTION_THRESHOLD is not None else 0.091730
+        features = {}
     
     ip = str(auth_data.get('ip', ''))
     
@@ -569,12 +586,34 @@ def read_new_logs_from_position(log_file: str, start_position: int) -> tuple:
     new_position = start_position
     
     if not os.path.exists(log_file):
+        logger.debug(f"Input log file not found: {log_file}")
+        return logs, new_position
+    
+    if not os.access(log_file, os.R_OK):
+        logger.error(f"❌ NO READ PERMISSION: {log_file}")
         return logs, new_position
     
     try:
         with open(log_file, 'r', encoding='utf-8') as f:
-            # Seek to last known position
-            f.seek(start_position)
+            # Check if file was truncated (log rotation)
+            try:
+                current_size = os.path.getsize(log_file)
+                if current_size < start_position:
+                    logger.debug(f"File appears to have been rotated (size {current_size} < position {start_position}), resetting to start")
+                    start_position = 0
+            except (OSError, FileNotFoundError):
+                # File may have been deleted or renamed
+                logger.debug(f"Could not get file size for {log_file}, assuming rotation")
+                start_position = 0
+            
+            # Seek to last known position (handle potential rotation)
+            try:
+                f.seek(start_position)
+            except (OSError, ValueError) as e:
+                # File may have been rotated or truncated
+                logger.debug(f"Could not seek to position {start_position}, resetting to start: {e}")
+                start_position = 0
+                f.seek(0)
             
             # Read only new lines
             for line in f:
@@ -594,7 +633,6 @@ def read_new_logs_from_position(log_file: str, start_position: int) -> tuple:
                     continue
                 
                 try:
-                    from datetime import datetime
                     if '+' in timestamp_str or timestamp_str.endswith('Z'):
                         time_str_clean = timestamp_str.replace('+0700', '+07:00').replace('+0000', '+00:00')
                         dt = datetime.fromisoformat(time_str_clean.replace('Z', '+00:00'))
@@ -608,10 +646,22 @@ def read_new_logs_from_position(log_file: str, start_position: int) -> tuple:
                     continue
             
             # Update position
-            new_position = f.tell()
+            try:
+                new_position = f.tell()
+            except (OSError, ValueError):
+                # File may have been rotated, reset position
+                new_position = 0
+                logger.debug("Could not get file position, resetting to 0")
             
+    except FileNotFoundError:
+        logger.debug(f"Input log file not found during read: {log_file}")
+        return logs, new_position
+    except PermissionError:
+        logger.error(f"❌ NO READ PERMISSION: {log_file}")
+        return logs, new_position
     except Exception as e:
-        logger.error(f"Error reading new logs: {e}")
+        logger.error(f"Error reading new logs from {log_file}: {e}")
+        logger.debug(traceback.format_exc())
     
     return logs, new_position
 
@@ -655,8 +705,15 @@ def detect_bruteforce_realtime(log_file: str, detector: OptimizedBruteForceDetec
             f.seek(0, 2)  # Seek to end
             last_position = f.tell()
         logger.info(f"📌 Starting position: {last_position} bytes (chỉ đọc log mới từ đây)")
+    except FileNotFoundError:
+        logger.error(f"❌ INPUT LOG FILE NOT FOUND: {log_file}")
+        return
+    except PermissionError:
+        logger.error(f"❌ NO READ PERMISSION: {log_file}")
+        return
     except Exception as e:
         logger.error(f"❌ Error reading input log file: {e}")
+        traceback.print_exc()
         return
     
     # Track processed alerts to avoid duplicates
@@ -676,7 +733,24 @@ def detect_bruteforce_realtime(log_file: str, detector: OptimizedBruteForceDetec
                 logger.debug(f"🧹 Cleaned up processed_alert_logs (removed {old_size} entries)")
             
             # Đọc log mới từ vị trí cuối cùng
-            new_logs, last_position = read_new_logs_from_position(log_file, last_position)
+            try:
+                new_logs, last_position = read_new_logs_from_position(log_file, last_position)
+            except Exception as e:
+                logger.error(f"Error in read_new_logs_from_position: {e}")
+                logger.debug(traceback.format_exc())
+                # Reset position on error to avoid infinite loop
+                try:
+                    if os.path.exists(log_file) and os.access(log_file, os.R_OK):
+                        with open(log_file, 'r', encoding='utf-8') as f:
+                            f.seek(0, 2)
+                            last_position = f.tell()
+                    else:
+                        last_position = 0
+                except Exception:
+                    last_position = 0
+                new_logs = []
+                time.sleep(1)  # Wait before retry
+                continue
             
             # Xử lý từng log mới ngay lập tức
             if new_logs:
@@ -1062,6 +1136,7 @@ def main():
     except Exception as e:
         logger.error(f"❌ Error checking output file: {e}")
         sys.exit(1)
+    
     if DETECTION_THRESHOLD is None:
         logger.info(f"Detection threshold: Auto (using model default: 50th percentile)")
     else:
