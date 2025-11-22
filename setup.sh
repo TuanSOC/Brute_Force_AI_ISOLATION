@@ -71,20 +71,18 @@ cd "$PROJECT_DIR"
 echo -e "${GREEN}✅ Repository ready${NC}"
 echo ""
 
-# Step 3: Install Dependencies
-echo "📦 Step 3: Installing Python dependencies..."
+# Step 3: Install Dependencies (System Python - No venv)
+echo "📦 Step 3: Installing Python dependencies (system Python)..."
+# Remove old venv if exists (not using venv anymore)
 if [ -d "venv" ]; then
-    echo "Virtual environment exists, activating..."
-    source venv/bin/activate
-else
-    echo "Creating virtual environment..."
-    python3 -m venv venv
-    source venv/bin/activate
+    echo "Removing old virtual environment (not needed)..."
+    rm -rf venv
+    echo -e "${GREEN}✅ Old venv removed${NC}"
 fi
 
-echo "Installing packages..."
-pip install --upgrade pip
-pip install pandas scikit-learn joblib numpy
+echo "Installing packages to system Python..."
+pip3 install --upgrade pip
+pip3 install pandas scikit-learn joblib numpy
 
 echo -e "${GREEN}✅ Dependencies installed${NC}"
 echo ""
@@ -149,13 +147,16 @@ echo ""
 
 # Step 6: Create Systemd Service
 echo "⚙️  Step 6: Creating systemd service..."
-PYTHON_PATH="$PROJECT_DIR/venv/bin/python3"
+# Use system Python (no venv)
+PYTHON_PATH="/usr/bin/python3"
 if [ ! -f "$PYTHON_PATH" ]; then
-    PYTHON_PATH="/usr/bin/python3"
-    echo -e "${YELLOW}⚠️  Using system Python: $PYTHON_PATH${NC}"
-else
-    echo -e "${GREEN}✅ Using venv Python: $PYTHON_PATH${NC}"
+    PYTHON_PATH=$(which python3)
+    if [ -z "$PYTHON_PATH" ]; then
+        echo -e "${RED}❌ Python3 not found${NC}"
+        exit 1
+    fi
 fi
+echo -e "${GREEN}✅ Using system Python: $PYTHON_PATH${NC}"
 
 cat > "$SERVICE_FILE" << EOF
 [Unit]
@@ -179,8 +180,8 @@ EOF
 echo -e "${GREEN}✅ Service file created: $SERVICE_FILE${NC}"
 echo ""
 
-# Step 7: Enable and Start Service
-echo "🚀 Step 7: Enabling and starting service..."
+# Step 7: Enable and Start Service (Auto-run in background)
+echo "🚀 Step 7: Enabling and starting service (auto-run in background)..."
 systemctl daemon-reload
 systemctl enable "$SERVICE_NAME"
 
@@ -188,7 +189,7 @@ if systemctl is-active --quiet "$SERVICE_NAME"; then
     echo "Service is already running. Restarting..."
     systemctl restart "$SERVICE_NAME"
 else
-    echo "Starting service..."
+    echo "Starting service in background..."
     systemctl start "$SERVICE_NAME"
 fi
 
@@ -199,7 +200,8 @@ sleep 3
 echo ""
 echo "📊 Service status:"
 if systemctl is-active --quiet "$SERVICE_NAME"; then
-    echo -e "${GREEN}✅ Service is running${NC}"
+    echo -e "${GREEN}✅ Service is running in background${NC}"
+    echo -e "${GREEN}✅ Service will auto-start on boot${NC}"
 else
     echo -e "${RED}❌ Service failed to start${NC}"
     echo "Check logs with: journalctl -u $SERVICE_NAME -n 50"
