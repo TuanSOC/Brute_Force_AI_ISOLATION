@@ -27,10 +27,10 @@ venv.bak/
 logs/
 *.log.*
 
-# Model files (uncomment if you don't want to commit models)
-# *.pkl
-# models/*.pkl
-# models/*.backup
+# Model files (only commit metadata, not .pkl files)
+*.pkl
+models/*.pkl
+models/*.backup
 
 # Training data
 normal.log

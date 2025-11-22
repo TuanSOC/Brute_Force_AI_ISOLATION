@@ -1,0 +1,25 @@
+{
+  "score_percentiles": {
+    "50": 0.025162157531008034,
+    "90": 0.08313093248266784,
+    "95": 0.08914201432940394,
+    "97.5": 0.09201313740373879,
+    "99": 0.09489471053423759,
+    "99.5": 0.09676898628105868
+  },
+  "bruteforce_score_threshold": 0.025162157531008034,
+  "feature_names": [
+    "failed_login_rate",
+    "unique_usernames_tried",
+    "unique_passwords_tried",
+    "time_between_attempts",
+    "failed_logins_1min",
+    "spamming_username",
+    "spamming_password"
+  ],
+  "contamination": "auto",
+  "random_state": 42,
+  "decision_threshold": null,
+  "training_samples": 100000,
+  "data_source": "/home/kali/Desktop/reBorn_AI/normal.log"
+}
