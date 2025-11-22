@@ -79,14 +79,20 @@ RULE_3_ENABLED = False   # High request rate: >15 requests/minute from 1 IP
 RULE_4_ENABLED = False   # False positive filter: AI detected but total logs < 3
 
 
+# Cache rule flags to avoid recreating dict every time
+_RULE_FLAGS_CACHE = None
+
 def get_rule_flags():
-    """Get rule flags dictionary from configuration"""
-    return {
-        'rule_1': RULE_1_ENABLED,
-        'rule_2': RULE_2_ENABLED,
-        'rule_3': RULE_3_ENABLED,
-        'rule_4': RULE_4_ENABLED
-    }
+    """Get rule flags dictionary from configuration (cached)"""
+    global _RULE_FLAGS_CACHE
+    if _RULE_FLAGS_CACHE is None:
+        _RULE_FLAGS_CACHE = {
+            'rule_1': RULE_1_ENABLED,
+            'rule_2': RULE_2_ENABLED,
+            'rule_3': RULE_3_ENABLED,
+            'rule_4': RULE_4_ENABLED
+        }
+    return _RULE_FLAGS_CACHE
 
 
 def signal_handler(sig, frame):
@@ -594,26 +600,26 @@ def read_new_logs_from_position(log_file: str, start_position: int) -> tuple:
         return logs, new_position
     
     try:
-        with open(log_file, 'r', encoding='utf-8') as f:
-            # Check if file was truncated (log rotation)
-            # QUAN TRỌNG: Nếu file bị rotate, chỉ đọc từ đầu file MỚI, không đọc file cũ
-            try:
-                current_size = os.path.getsize(log_file)
-                if current_size < start_position:
-                    # File bị rotate - reset về đầu file MỚI (không phải file cũ)
-                    logger.info(f"⚠️  File rotated: size {current_size} < position {start_position}")
-                    logger.info(f"   ✅ Reset position to 0 (chỉ đọc log mới từ file mới)")
-                    start_position = 0
-            except (OSError, FileNotFoundError):
-                # File may have been deleted or renamed
-                logger.debug(f"Could not get file size for {log_file}, assuming rotation")
+        # Tối ưu: Check file size trước khi mở file
+        try:
+            current_size = os.path.getsize(log_file)
+            if current_size < start_position:
+                # File bị rotate - reset về đầu file MỚI (không phải file cũ)
+                logger.info(f"⚠️  File rotated: size {current_size} < position {start_position}")
+                logger.info(f"   ✅ Reset position to 0 (chỉ đọc log mới từ file mới)")
                 start_position = 0
-            
+        except (OSError, FileNotFoundError):
+            # File may have been deleted or renamed
+            logger.debug(f"Could not get file size for {log_file}, assuming rotation")
+            start_position = 0
+        
+        with open(log_file, 'r', encoding='utf-8') as f:
             # Seek to last known position (handle potential rotation)
             # QUAN TRỌNG: Chỉ seek đến vị trí đã biết, không bao giờ đọc lại từ đầu file cũ
             try:
                 if start_position > 0:
                     f.seek(start_position)
+                    # Chỉ log khi debug để giảm noise
                     logger.debug(f"Seeking to position {start_position} (chỉ đọc log mới)")
                 else:
                     # Nếu start_position = 0 (file mới hoặc rotate), đọc từ đầu file MỚI
@@ -741,6 +747,14 @@ def detect_bruteforce_realtime(log_file: str, detector: OptimizedBruteForceDetec
     last_cleanup_time = time.time()
     CLEANUP_INTERVAL = 600  # Cleanup every 10 minutes
     
+    # Cache rule flags (không cần tạo lại mỗi lần)
+    rule_flags = get_rule_flags()
+    
+    # Tối ưu: Giảm sleep time khi có log mới, tăng khi không có log
+    no_log_count = 0
+    SLEEP_TIME_NO_LOG = 0.1  # 100ms khi không có log
+    SLEEP_TIME_HAS_LOG = 0.01  # 10ms khi có log (xử lý nhanh hơn)
+    
     try:
         while running:
             current_time = time.time()
@@ -755,8 +769,6 @@ def detect_bruteforce_realtime(log_file: str, detector: OptimizedBruteForceDetec
             # Đọc log mới từ vị trí cuối cùng (CHỈ LOG MỚI, KHÔNG ĐỌC LOG CŨ)
             try:
                 new_logs, last_position = read_new_logs_from_position(log_file, last_position)
-                if new_logs:
-                    logger.debug(f"📥 Read {len(new_logs)} NEW log entries (realtime)")
             except Exception as e:
                 logger.error(f"Error in read_new_logs_from_position: {e}")
                 logger.debug(traceback.format_exc())
@@ -773,20 +785,22 @@ def detect_bruteforce_realtime(log_file: str, detector: OptimizedBruteForceDetec
                     last_position = 0
                 new_logs = []
                 time.sleep(1)  # Wait before retry
+                no_log_count = 0
                 continue
             
             # Xử lý từng log mới ngay lập tức (REALTIME DETECTION)
             if new_logs:
-                logger.debug(f"📥 Processing {len(new_logs)} NEW log entries (realtime detection)")
+                no_log_count = 0  # Reset counter khi có log
+                if len(new_logs) > 1:
+                    logger.debug(f"📥 Processing {len(new_logs)} NEW log entries (realtime detection)")
                 
                 for auth_data, wazuh_entry, log_timestamp in new_logs:
                     try:
                         # Convert to detector format
                         log_entry = convert_to_detector_format(auth_data)
                         
-                        # Detect brute-force
+                        # Detect brute-force (sử dụng cached rule_flags)
                         detect_start_time = time.time()
-                        rule_flags = get_rule_flags()
                         detection_result = detector.predict_single(log_entry, threshold=DETECTION_THRESHOLD, rule_flags=rule_flags)
                         detect_end_time = time.time()
                         detect_duration_ms = (detect_end_time - detect_start_time) * 1000
