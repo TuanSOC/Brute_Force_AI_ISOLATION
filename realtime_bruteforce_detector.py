@@ -629,10 +629,6 @@ def detect_bruteforce_realtime(log_file: str, detector: OptimizedBruteForceDetec
     """
     global running, last_position
     
-    if not os.path.exists(log_file):
-        logger.error(f"Log file not found: {log_file}")
-        return
-    
     # Validate input log file exists and readable
     if not os.path.exists(log_file):
         logger.error(f"❌ INPUT LOG FILE NOT FOUND: {log_file}")
