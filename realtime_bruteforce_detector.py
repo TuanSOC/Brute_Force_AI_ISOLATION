@@ -310,6 +310,8 @@ def write_alert(log_entry: Dict[str, Any], detection_result: tuple, auth_data: D
         detection_result: Extended tuple from predict_single
         auth_data: Original auth data
         wazuh_entry: Original Wazuh entry (for format reconstruction)
+    
+    Output Path: /var/ossec/logs/brute.log (hardcoded for Wazuh SIEM)
     """
     # Unpack extended result tuple
     if len(detection_result) >= 9:
@@ -377,19 +379,30 @@ def write_alert(log_entry: Dict[str, Any], detection_result: tuple, auth_data: D
             'risk_score': risk_score
         }
     
-    # Ensure directory exists
+    # Output file path - CHUẨN cho Wazuh SIEM
     alert_file = '/var/ossec/logs/brute.log'
     alert_dir = os.path.dirname(alert_file)
+    
+    # Ensure directory exists
     if alert_dir:
-        os.makedirs(alert_dir, exist_ok=True)
+        try:
+            os.makedirs(alert_dir, exist_ok=True)
+        except Exception as e:
+            logger.error(f"❌ Failed to create output directory {alert_dir}: {e}")
+            return
     
     # Write alert (only called when is_bruteforce is True)
     try:
         with open(alert_file, 'a', encoding='utf-8') as f:
-            f.write(json.dumps(alert, ensure_ascii=False, default=str) + '\n')
+            alert_json = json.dumps(alert, ensure_ascii=False, default=str) + '\n'
+            f.write(alert_json)
             f.flush()  # Ensure immediate write
+            logger.debug(f"✅ Alert written to {alert_file}")
+    except PermissionError:
+        logger.error(f"❌ NO WRITE PERMISSION: {alert_file}")
+        logger.error("Please check file permissions for /var/ossec/logs/")
     except Exception as e:
-        logger.error(f"Error writing alert to {alert_file}: {e}")
+        logger.error(f"❌ Error writing alert to {alert_file}: {e}")
         logger.error(traceback.format_exc())
 
 
@@ -620,9 +633,24 @@ def detect_bruteforce_realtime(log_file: str, detector: OptimizedBruteForceDetec
         logger.error(f"Log file not found: {log_file}")
         return
     
-    logger.info(f"👀 Real-time monitoring: {log_file}")
+    # Validate input log file exists and readable
+    if not os.path.exists(log_file):
+        logger.error(f"❌ INPUT LOG FILE NOT FOUND: {log_file}")
+        logger.error("Please ensure the input log file exists")
+        return
+    
+    if not os.access(log_file, os.R_OK):
+        logger.error(f"❌ NO READ PERMISSION: {log_file}")
+        logger.error("Please check file permissions")
+        return
+    
+    OUTPUT_ALERT_FILE = '/var/ossec/logs/brute.log'
+    
+    logger.info(f"👀 Real-time monitoring:")
+    logger.info(f"   📥 INPUT:  {log_file}")
+    logger.info(f"   📤 OUTPUT: {OUTPUT_ALERT_FILE}")
     logger.info(f"   - ✅ REAL-TIME: Detect ngay khi có log mới")
-    logger.info(f"   - ✅ CHỈ GHI: Các log phát hiện brute-force vào /var/ossec/logs/brute.log")
+    logger.info(f"   - ✅ CHỈ GHI: Các log phát hiện brute-force vào {OUTPUT_ALERT_FILE}")
     logger.info("Press Ctrl+C to stop")
     
     # Initialize file position (bắt đầu từ cuối file = chỉ đọc log mới)
@@ -630,9 +658,10 @@ def detect_bruteforce_realtime(log_file: str, detector: OptimizedBruteForceDetec
         with open(log_file, 'r', encoding='utf-8') as f:
             f.seek(0, 2)  # Seek to end
             last_position = f.tell()
-        logger.info(f"📌 Starting position: {last_position} (chỉ đọc log mới từ đây)")
-    except Exception:
-        last_position = 0
+        logger.info(f"📌 Starting position: {last_position} bytes (chỉ đọc log mới từ đây)")
+    except Exception as e:
+        logger.error(f"❌ Error reading input log file: {e}")
+        return
     
     # Track processed alerts to avoid duplicates
     processed_alert_logs = set()
@@ -995,16 +1024,48 @@ def main():
     signal.signal(signal.SIGINT, signal_handler)
     signal.signal(signal.SIGTERM, signal_handler)
     
-    # Configuration
-    log_file = '/opt/ai-bruteforce/brute.log'
+    # Configuration - PATHS CHUẨN
+    INPUT_LOG_FILE = '/opt/ai-bruteforce/brute.log'
+    OUTPUT_ALERT_FILE = '/var/ossec/logs/brute.log'
     model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'models/optimized_bruteforce_detector.pkl')
     
     logger.info("=" * 70)
     logger.info("🚀 Real-time Brute-Force Detection System")
     logger.info("=" * 70)
-    logger.info(f"Log file: {log_file}")
-    logger.info(f"Model: {model_path}")
-    logger.info(f"Alert file: /var/ossec/logs/brute.log")
+    logger.info(f"📥 INPUT LOG:  {INPUT_LOG_FILE}")
+    logger.info(f"📤 OUTPUT LOG: {OUTPUT_ALERT_FILE}")
+    logger.info(f"🤖 MODEL:      {model_path}")
+    
+    # Validate input log file
+    if not os.path.exists(INPUT_LOG_FILE):
+        logger.error(f"❌ INPUT LOG FILE NOT FOUND: {INPUT_LOG_FILE}")
+        logger.error("Please create the input log file or check the path")
+        logger.error("Creating directory and file...")
+        os.makedirs(os.path.dirname(INPUT_LOG_FILE), exist_ok=True)
+        with open(INPUT_LOG_FILE, 'w') as f:
+            pass
+        logger.info(f"✅ Created input log file: {INPUT_LOG_FILE}")
+    
+    # Validate output directory
+    output_dir = os.path.dirname(OUTPUT_ALERT_FILE)
+    if not os.path.exists(output_dir):
+        logger.warning(f"⚠️  OUTPUT DIRECTORY NOT FOUND: {output_dir}")
+        logger.info("Creating output directory...")
+        os.makedirs(output_dir, exist_ok=True)
+        logger.info(f"✅ Created output directory: {output_dir}")
+    
+    # Check write permission for output file
+    try:
+        with open(OUTPUT_ALERT_FILE, 'a') as f:
+            pass
+        logger.info(f"✅ Output file writable: {OUTPUT_ALERT_FILE}")
+    except PermissionError:
+        logger.error(f"❌ NO WRITE PERMISSION: {OUTPUT_ALERT_FILE}")
+        logger.error("Please check file permissions")
+        sys.exit(1)
+    except Exception as e:
+        logger.error(f"❌ Error checking output file: {e}")
+        sys.exit(1)
     if DETECTION_THRESHOLD is None:
         logger.info(f"Detection threshold: Auto (using model default: 50th percentile)")
     else:
@@ -1017,11 +1078,11 @@ def main():
     logger.info(f"   - Rule 4 (False Positive Filter): {'ENABLED' if RULE_4_ENABLED else 'DISABLED'}")
     logger.info("=" * 70)
     logger.info("📊 LOGGING MODE:")
-    logger.info("   - 🚨 = Brute-force detected (WARNING level) - Ghi vào /var/ossec/logs/brute.log")
+    logger.info(f"   - 🚨 = Brute-force detected (WARNING level) - Ghi vào {OUTPUT_ALERT_FILE}")
     logger.info("   - DEBUG = Normal entry (chỉ log khi có brute-force)")
     logger.info("=" * 70)
     logger.info("⚠️  NOTE: Real-time detection - Xử lý ngay khi có log mới")
-    logger.info("⚠️  NOTE: Chỉ ghi các log phát hiện brute-force vào /var/ossec/logs/brute.log")
+    logger.info(f"⚠️  NOTE: Chỉ ghi các log phát hiện brute-force vào {OUTPUT_ALERT_FILE}")
     logger.info("=" * 70)
     
     # Check if model exists
@@ -1043,7 +1104,7 @@ def main():
     
     # Real-time monitoring - Xử lý ngay khi có log mới
     try:
-        detect_bruteforce_realtime(log_file, detector)
+        detect_bruteforce_realtime(INPUT_LOG_FILE, detector)
     except Exception as e:
         logger.error(f"Error in real-time monitoring: {e}")
         traceback.print_exc()
